@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:crypto_treasury/data/models/crypto_wallet.dart';
@@ -78,15 +79,18 @@ class WalletViewModel extends StateNotifier<WalletUiState> {
       return;
     }
 
+    debugPrint('[WalletViewModel] connectWallet() starting');
     state = state.copyWith(isConnecting: true, clearError: true);
     try {
       final wallet = await _repository.connectWallet();
+      debugPrint('[WalletViewModel] connectWallet() wallet=' + (wallet == null ? 'null' : wallet.address));
       state = state.copyWith(
         wallet: wallet,
         isConnecting: false,
         clearError: true,
       );
     } catch (error) {
+      debugPrint('[WalletViewModel] connectWallet() error: ' + error.toString());
       state = state.copyWith(
         isConnecting: false,
         errorMessage: error.toString(),
@@ -101,18 +105,21 @@ class WalletViewModel extends StateNotifier<WalletUiState> {
       return;
     }
 
+    debugPrint('[WalletViewModel] _refreshWallet(silent=' + silent.toString() + ')');
     if (!silent) {
       state = state.copyWith(isRefreshing: true, clearError: true);
     }
 
     try {
       final wallet = await _repository.refreshWallet();
+      debugPrint('[WalletViewModel] _refreshWallet result wallet=' + (wallet == null ? 'null' : wallet.address));
       state = state.copyWith(
         wallet: wallet,
         isRefreshing: false,
         clearError: true,
       );
     } catch (error) {
+      debugPrint('[WalletViewModel] _refreshWallet error: ' + error.toString());
       state = state.copyWith(
         isRefreshing: false,
         errorMessage: error.toString(),
@@ -121,6 +128,7 @@ class WalletViewModel extends StateNotifier<WalletUiState> {
   }
 
   void _handleAccountChange(List<String> accounts) {
+    debugPrint('[WalletViewModel] _handleAccountChange: ' + accounts.toString());
     if (accounts.isEmpty) {
       state = state.copyWith(clearWallet: true);
       return;
@@ -137,6 +145,7 @@ class WalletViewModel extends StateNotifier<WalletUiState> {
   }
 
   void _handleChainChange(int chainId) {
+    debugPrint('[WalletViewModel] _handleChainChange: ' + chainId.toString());
     final address = _repository.currentAccount;
     if (address == null) {
       state = state.copyWith(clearWallet: true);
@@ -150,18 +159,21 @@ class WalletViewModel extends StateNotifier<WalletUiState> {
     required String address,
     required int chainId,
   }) async {
+    debugPrint('[WalletViewModel] _loadWallet address=' + address + ', chainId=' + chainId.toString());
     state = state.copyWith(isRefreshing: true, clearError: true);
     try {
       final wallet = await _repository.loadWallet(
         address: address,
         chainId: chainId,
       );
+      debugPrint('[WalletViewModel] _loadWallet result wallet=' + (wallet == null ? 'null' : wallet.address));
       state = state.copyWith(
         wallet: wallet,
         isRefreshing: false,
         clearError: true,
       );
     } catch (error) {
+      debugPrint('[WalletViewModel] _loadWallet error: ' + error.toString());
       state = state.copyWith(
         isRefreshing: false,
         errorMessage: error.toString(),

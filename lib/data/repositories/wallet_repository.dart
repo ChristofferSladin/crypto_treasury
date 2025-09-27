@@ -34,6 +34,16 @@ class WalletRepository {
     ),
     TrackedToken(
       chainId: 137,
+      address: '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359',
+      symbol: 'USDC',
+      name: 'USD Coin',
+      decimals: 6,
+      coingeckoId: 'usd-coin',
+      logoUrl:
+          'https://assets.coingecko.com/coins/images/6319/small/USD_Coin_icon.png',
+    ),
+    TrackedToken(
+      chainId: 137,
       address: '0x2791bca1f2de4661ed88a30c99a7a9449aa84174',
       symbol: 'USDC.e',
       name: 'USD Coin (Bridged)',
@@ -94,3 +104,5 @@ class WalletRepository {
     _metamaskService.dispose();
   }
 }
+
+

@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_web3/flutter_web3.dart';
+import 'package:js/js_util.dart' as js_util;
 import 'package:http/http.dart' as http;
 
 import 'package:crypto_treasury/data/models/crypto_asset.dart';
@@ -11,7 +13,9 @@ import 'package:crypto_treasury/data/models/tracked_token.dart';
 class MetamaskService {
   MetamaskService({http.Client? httpClient})
       : _httpClient = httpClient ?? http.Client(),
-        _ownsClient = httpClient == null;
+        _ownsClient = httpClient == null {
+    _warmUpCachedState();
+  }
 
   final http.Client _httpClient;
   final bool _ownsClient;
@@ -54,27 +58,220 @@ class MetamaskService {
 
   bool get isSupported => kIsWeb && _ethereum != null;
 
-  bool get isMetaMask => isSupported && (_ethereum?.runtimeType.toString().toLowerCase().contains('metamask') == true);
+  bool get isMetaMask {
+    if (!isSupported) {
+      return false;
+    }
 
-  bool get isConnected => isMetaMask && _ethereum!.selectedAddress != null;
+    final eth = _ethereum;
+    if (eth == null) {
+      return false;
+    }
 
-  int? get currentChainId => _ethereum?.chainId != null ? int.tryParse(_ethereum!.chainId!) : null;
+    try {
+      final dynamic flag = js_util.getProperty(eth, 'isMetaMask');
+      if (flag is bool) {
+        return flag;
+      }
+    } catch (_) {
+      // Ignore and fall back to assuming MetaMask-like provider.
+    }
 
-  String? get currentAccount => _ethereum?.selectedAddress;
+    return true;
+  }
 
-  Stream<List<String>> get accountStream =>
-      (_ethereum?.onAccountsChanged as Stream<List<String>>?) ?? const Stream.empty();
+  bool get isConnected => isMetaMask && _cachedAccount != null;
 
-  Stream<int> get chainStream =>
-      (_ethereum?.onChainChanged as Stream<int>?) ?? const Stream.empty();
+  int? get currentChainId => _cachedChainId;
+
+  String? get currentAccount => _cachedAccount;
+
+  String? _cachedAccount;
+  int? _cachedChainId;
+  StreamController<List<String>>? _accountChangesController;
+  StreamController<int>? _chainChangesController;
+  bool _accountListenerAttached = false;
+  bool _chainListenerAttached = false;
+  List<String>? _pendingAccountSnapshot;
+  int? _pendingChainSnapshot;
+
+  void _dispatchAccountSnapshot(List<String> accounts) {
+    final snapshot = List<String>.from(accounts);
+    final controller = _accountChangesController;
+
+    if (controller == null) {
+      _pendingAccountSnapshot = snapshot;
+      return;
+    }
+
+    if (controller.isClosed) {
+      _accountListenerAttached = false;
+      _pendingAccountSnapshot = snapshot;
+      return;
+    }
+
+    _pendingAccountSnapshot = null;
+    controller.add(snapshot);
+  }
+
+  void _dispatchChainSnapshot(int chainId) {
+    final controller = _chainChangesController;
+    if (controller == null) {
+      _pendingChainSnapshot = chainId;
+      return;
+    }
+
+    if (controller.isClosed) {
+      _chainListenerAttached = false;
+      _pendingChainSnapshot = chainId;
+      return;
+    }
+
+    _pendingChainSnapshot = null;
+    controller.add(chainId);
+  }
+
+  void _warmUpCachedState() {
+    final eth = _ethereum;
+    if (eth == null) {
+      return;
+    }
+
+    debugPrint('[MetaMask] Warm-up accounts request issued');
+    unawaited(eth.getAccounts().then((accounts) {
+      final normalized = accounts.map((value) => value.toString()).toList();
+      _cachedAccount = normalized.isNotEmpty ? normalized.first : null;
+      debugPrint('[MetaMask] Warm-up accounts response: ' + normalized.toString());
+      _dispatchAccountSnapshot(normalized);
+    }).catchError((error, stack) {
+      debugPrint('[MetaMask] Warm-up accounts failed: ' + error.toString());
+    }));
+
+    debugPrint('[MetaMask] Warm-up chainId request issued');
+    unawaited(eth.getChainId().then((chainId) {
+      _cachedChainId = chainId;
+      debugPrint('[MetaMask] Warm-up chainId response: ' + chainId.toString());
+      _dispatchChainSnapshot(chainId);
+    }).catchError((error, stack) {
+      debugPrint('[MetaMask] Warm-up chainId failed: ' + error.toString());
+    }));
+  }
+
+  Stream<List<String>> get accountStream {
+    final eth = _ethereum;
+    if (eth == null) {
+      debugPrint('[MetaMask] accountStream requested but MetaMask unavailable');
+      return const Stream.empty();
+    }
+
+    final controller = _accountChangesController ??= StreamController<List<String>>.broadcast();
+    if (!_accountListenerAttached) {
+      debugPrint('[MetaMask] accountStream attaching onAccountsChanged listener');
+      eth.onAccountsChanged(_handleAccountsChanged);
+      _accountListenerAttached = true;
+    }
+
+    final pending = _pendingAccountSnapshot;
+    if (pending != null && !controller.isClosed) {
+      controller.add(List<String>.from(pending));
+      _pendingAccountSnapshot = null;
+    }
+
+    return controller.stream;
+  }
+
+  Stream<int> get chainStream {
+    final eth = _ethereum;
+    if (eth == null) {
+      debugPrint('[MetaMask] chainStream requested but MetaMask unavailable');
+      return const Stream.empty();
+    }
+
+    final controller = _chainChangesController ??= StreamController<int>.broadcast();
+    if (!_chainListenerAttached) {
+      debugPrint('[MetaMask] chainStream attaching onChainChanged listener');
+      eth.onChainChanged(_handleChainChanged);
+      _chainListenerAttached = true;
+    }
+
+    final pending = _pendingChainSnapshot;
+    if (pending != null && !controller.isClosed) {
+      controller.add(pending);
+      _pendingChainSnapshot = null;
+    }
+
+    return controller.stream;
+  }
+
+  void _handleAccountsChanged(List<String> accounts) {
+    final normalized = accounts.map((value) => value.toString()).toList();
+    _cachedAccount = normalized.isNotEmpty ? normalized.first : null;
+    if (normalized.isEmpty) {
+      _cachedChainId = null;
+    }
+
+    debugPrint('[MetaMask] onAccountsChanged: ' + normalized.toString());
+    _dispatchAccountSnapshot(normalized);
+  }
+
+  void _handleChainChanged(int chainId) {
+    _cachedChainId = chainId;
+    debugPrint('[MetaMask] onChainChanged: ' + chainId.toString());
+    _dispatchChainSnapshot(chainId);
+  }
+
+  Future<int?> _resolveChainId() async {
+    final eth = _ethereum;
+    if (eth == null) {
+      return null;
+    }
+
+    try {
+      final chainId = await eth.getChainId();
+      _cachedChainId = chainId;
+      debugPrint('[MetaMask] Resolved chainId via provider API: ' + chainId.toString());
+      _dispatchChainSnapshot(chainId);
+      return chainId;
+    } catch (error, stack) {
+      debugPrint('[MetaMask] getChainId() failed: ' + error.toString());
+      final provider = _provider;
+      if (provider != null) {
+        try {
+          final network = await provider.getNetwork();
+          final resolved = network.chainId;
+          _cachedChainId = resolved;
+          debugPrint('[MetaMask] Fallback network.chainId resolved: ' + resolved.toString());
+          _dispatchChainSnapshot(resolved);
+          return resolved;
+        } catch (fallbackError, stackFallback) {
+          debugPrint('[MetaMask] provider.getNetwork() failed: ' + fallbackError.toString());
+        }
+      }
+      debugPrint('[MetaMask] Falling back to cached chainId: ' + (_cachedChainId?.toString() ?? 'null'));
+      return _cachedChainId;
+    }
+  }
 
   Future<String?> connect() async {
+    debugPrint('[MetaMask] connect() invoked. isMetaMask=' + isMetaMask.toString());
     if (!isMetaMask) {
+      debugPrint('[MetaMask] connect() aborted: MetaMask not detected');
       return null;
     }
 
     final accounts = await _ethereum!.requestAccount();
-    return accounts.isNotEmpty ? accounts.first : null;
+    if (accounts.isEmpty) {
+      debugPrint('[MetaMask] connect() returned no accounts');
+      _cachedAccount = null;
+      return null;
+    }
+
+    final normalized = accounts.map((value) => value.toString()).toList();
+    debugPrint('[MetaMask] connect() accounts: ' + normalized.toString());
+    final primary = normalized.first;
+    _cachedAccount = primary;
+    _dispatchAccountSnapshot(normalized);
+    return primary;
   }
 
   Future<CryptoWallet?> connectAndLoadWallet({
@@ -82,14 +279,17 @@ class MetamaskService {
   }) async {
     final address = await connect();
     if (address == null) {
+      debugPrint('[MetaMask] connectAndLoadWallet() no account returned');
       return null;
     }
 
-    final chainId = currentChainId;
+    final chainId = await _resolveChainId();
     if (chainId == null) {
+      debugPrint('[MetaMask] connectAndLoadWallet() failed to resolve chainId');
       return null;
     }
 
+    debugPrint('[MetaMask] connectAndLoadWallet() chainId=' + chainId.toString());
     final assets = await _buildAssets(
       address: address,
       chainId: chainId,
@@ -105,9 +305,13 @@ class MetamaskService {
     required List<TrackedToken> trackedTokens,
   }) async {
     if (!isMetaMask) {
+      debugPrint('[MetaMask] loadWallet() aborted: MetaMask unavailable');
       return null;
     }
 
+    debugPrint('[MetaMask] loadWallet() using cached address=' + address + ', chainId=' + chainId.toString());
+    _cachedAccount = address;
+    _cachedChainId = chainId;
     final assets = await _buildAssets(
       address: address,
       chainId: chainId,
@@ -282,5 +486,27 @@ class MetamaskService {
     if (_ownsClient) {
       _httpClient.close();
     }
+
+    final eth = _ethereum;
+    if (eth != null) {
+      if (_accountListenerAttached) {
+        eth.removeAllListeners('accountsChanged');
+        _accountListenerAttached = false;
+      }
+      if (_chainListenerAttached) {
+        eth.removeAllListeners('chainChanged');
+        _chainListenerAttached = false;
+      }
+    }
+
+    _cachedAccount = null;
+    _cachedChainId = null;
+    _pendingAccountSnapshot = null;
+    _pendingChainSnapshot = null;
+
+    _accountChangesController?.close();
+    _accountChangesController = null;
+    _chainChangesController?.close();
+    _chainChangesController = null;
   }
 }
