@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vault 3D</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script defer src="Build/Build.loader.js"></script>
+    <script>
+      let pendingWalletPayload = null;
+
+      const tryDispatchWallet = (serialized) => {
+        if (typeof window.UnityVault?.setWallet === 'function') {
+          window.UnityVault.setWallet(serialized);
+          return true;
+        }
+        if (typeof window.SetWalletJSON === 'function') {
+          window.SetWalletJSON(serialized);
+          return true;
+        }
+        if (typeof window.unityInstance?.SendMessage === 'function') {
+          window.unityInstance.SendMessage('BridgeRuntime', 'HandleWalletJSON', serialized);
+          return true;
+        }
+        return false;
+      };
+
+      const flushPendingWallet = () => {
+        if (!pendingWalletPayload) {
+          return;
+        }
+        if (tryDispatchWallet(pendingWalletPayload)) {
+          pendingWalletPayload = null;
+          window.UnityVaultPendingWallet = null;
+        }
+      };
+
+      window.addEventListener('message', (event) => {
+        try {
+          const raw = event.data;
+          const message = typeof raw === 'string' ? JSON.parse(raw) : raw;
+          if (message?.type === 'setWallet') {
+            const serialized = typeof raw === 'string' ? raw : JSON.stringify(message);
+            if (!tryDispatchWallet(serialized)) {
+              pendingWalletPayload = serialized;
+              window.UnityVaultPendingWallet = serialized;
+            }
+          }
+        } catch (error) {
+          console.warn('Vault message bridge error', error);
+        }
+      });
+
+      window.resetVaultCoins = function () {
+        if (typeof window.UnityVault?.resetCoins === 'function') {
+          window.UnityVault.resetCoins();
+        } else if (typeof window.ResetVaultCoins === 'function') {
+          window.ResetVaultCoins();
+        }
+      };
+
+      window.addEventListener('load', () => {
+        const buildUrl = 'Build/Build';
+        const config = {
+          dataUrl: `${buildUrl}.data.unityweb`,
+          frameworkUrl: `${buildUrl}.framework.js.unityweb`,
+          codeUrl: `${buildUrl}.wasm.unityweb`,
+          streamingAssetsUrl: 'StreamingAssets',
+          companyName: 'CryptoTreasury',
+          productName: 'Vault',
+          productVersion: '1.0',
+          showBanner: (msg, type) => {
+            const warningBanner = document.querySelector('#unity-warning');
+            if (!warningBanner) {
+              return;
+            }
+            const div = document.createElement('div');
+            div.innerHTML = msg;
+            warningBanner.appendChild(div);
+            div.style = type === 'error'
+              ? 'background: red; padding: 10px;'
+              : 'background: yellow; padding: 10px;';
+            setTimeout(() => warningBanner.removeChild(div), 5000);
+          },
+        };
+
+        const canvas = document.querySelector('#unity-canvas');
+        const startInstance = () => {
+          if (typeof createUnityInstance !== 'function') {
+            console.error('Unity loader not ready');
+            return;
+          }
+          createUnityInstance(canvas, config)
+            .then((instance) => {
+              window.unityInstance = instance;
+              flushPendingWallet();
+            })
+            .catch((message) => {
+              console.error(message);
+            });
+        };
+
+        if (typeof createUnityInstance === 'function') {
+          startInstance();
+        } else {
+          window.addEventListener('unity-loader-ready', () => {
+            startInstance();
+            flushPendingWallet();
+          }, { once: true });
+        }
+      });
+
+      window.flushPendingWallet = flushPendingWallet;
+    </script>
+  </head>
+  <body>
+    <div id="unity-container" class="unity-desktop">
+      <canvas id="unity-canvas"></canvas>
+      <div id="unity-loading-bar">
+        <div id="unity-logo"></div>
+        <div id="unity-progress-bar-empty">
+          <div id="unity-progress-bar-full"></div>
+        </div>
+      </div>
+      <div id="unity-warning"></div>
+    </div>
+  </body>
+</html>

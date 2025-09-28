@@ -54,6 +54,17 @@ class MetamaskService {
     56: 'binance-smart-chain',
   };
 
+  static const Set<String> _stableCoinSymbols = {
+    'USDC',
+    'USDC.E',
+    'USDCe',
+    'USDT',
+    'DAI',
+    'BUSD',
+    'USDP',
+    'TUSD',
+  };
+
   Ethereum? get _ethereum => ethereum;
 
   bool get isSupported => kIsWeb && _ethereum != null;
@@ -362,8 +373,8 @@ class MetamaskService {
       try {
         final balance = await _readTokenBalance(token, address);
         final normalized = _normalize(balance, token.decimals);
-        final usdValue =
-            normalized * (usdPrices[token.address.toLowerCase()] ?? 0);
+        final price = _resolveUsdPrice(token, usdPrices);
+        final usdValue = normalized * price;
 
         assets.add(
           CryptoAsset(
@@ -412,6 +423,21 @@ class MetamaskService {
     }
 
     return value.toDouble() / divisor.toDouble();
+  }
+
+  double _resolveUsdPrice(TrackedToken token, Map<String, double> usdPrices) {
+    final addressKey = token.address.toLowerCase();
+    final marketPrice = usdPrices[addressKey];
+    if (marketPrice != null && marketPrice > 0) {
+      return marketPrice;
+    }
+
+    final symbol = token.symbol.toUpperCase();
+    if (_stableCoinSymbols.contains(symbol)) {
+      return 1;
+    }
+
+    return 0;
   }
 
   Future<double?> _fetchNativeUsdPrice(int chainId) async {

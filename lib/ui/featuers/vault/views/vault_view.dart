@@ -1,16 +1,25 @@
 import 'package:crypto_treasury/ui/featuers/vault/viewmodels/providers.dart';
 import 'package:crypto_treasury/ui/featuers/vault/viewmodels/wallet_view_model.dart';
 import 'package:crypto_treasury/ui/featuers/vault/widgets/vault_asset_card.dart';
+import 'package:crypto_treasury/ui/featuers/vault/widgets/vault_unity_panel.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
-class VaultView extends ConsumerWidget {
+class VaultView extends ConsumerStatefulWidget {
   const VaultView({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<VaultView> createState() => _VaultViewState();
+}
+
+class _VaultViewState extends ConsumerState<VaultView> {
+  bool _unityReady = false;
+  VaultCoinSelection? _selection;
+
+  @override
+  Widget build(BuildContext context) {
     final walletState = ref.watch(walletViewModelProvider);
 
     return Scaffold(
@@ -33,8 +42,8 @@ class VaultView extends ConsumerWidget {
             onPressed: walletState.isRefreshing
                 ? null
                 : () => ref
-                      .read(walletViewModelProvider.notifier)
-                      .refreshWallet(),
+                    .read(walletViewModelProvider.notifier)
+                    .refreshWallet(),
             icon: const Icon(Icons.refresh),
           ),
         ],
@@ -44,35 +53,89 @@ class VaultView extends ConsumerWidget {
         child: !walletState.isSupported
             ? const _UnsupportedNotice(key: ValueKey('unsupported'))
             : walletState.wallet == null
-            ? const _EmptyVaultState(key: ValueKey('empty'))
-            : _VaultContent(
-                key: const ValueKey('content'),
-                walletState: walletState,
-              ),
+                ? const _EmptyVaultState(key: ValueKey('empty'))
+                : _VaultContent(
+                    key: const ValueKey('content'),
+                    walletState: walletState,
+                    unityReady: _unityReady,
+                    onUnityReady: _handleUnityReady,
+                    onCoinSelected: _handleCoinSelected,
+                    selection: _selection,
+                  ),
       ),
     );
+  }
+
+  void _handleUnityReady(bool ready) {
+    if (_unityReady == ready) {
+      return;
+    }
+    setState(() {
+      _unityReady = ready;
+    });
+  }
+
+  void _handleCoinSelected(VaultCoinSelection selection) {
+    setState(() {
+      _selection = selection;
+    });
   }
 }
 
 class _VaultContent extends StatelessWidget {
-  const _VaultContent({super.key, required this.walletState});
+  const _VaultContent({
+    super.key,
+    required this.walletState,
+    required this.unityReady,
+    required this.onUnityReady,
+    required this.onCoinSelected,
+    required this.selection,
+  });
 
   final WalletUiState walletState;
+  final bool unityReady;
+  final ValueChanged<bool> onUnityReady;
+  final ValueChanged<VaultCoinSelection> onCoinSelected;
+  final VaultCoinSelection? selection;
 
   @override
   Widget build(BuildContext context) {
     final wallet = walletState.wallet!;
     final theme = Theme.of(context);
+    final balancesForUnity = walletState.toUnityBalances();
 
     return LayoutBuilder(
       builder: (context, constraints) {
         final estimatedCrossAxis = (constraints.maxWidth / 240).floor();
         final crossAxisCount = estimatedCrossAxis.clamp(1, 4).toInt();
+
         return SingleChildScrollView(
           padding: const EdgeInsets.all(24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              AspectRatio(
+                aspectRatio: 16 / 9,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(24),
+                  child: Card(
+                    clipBehavior: Clip.antiAlias,
+                    margin: EdgeInsets.zero,
+                    child: VaultUnityPanel(
+                      walletBalances: balancesForUnity,
+                      showLoader: walletState.isRefreshing || !unityReady,
+                      onUnityReady: onUnityReady,
+                      onCoinSelected: onCoinSelected,
+                    ),
+                  ),
+                ),
+              ),
+              if (selection != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 16),
+                  child: _SelectionBanner(selection: selection!),
+                ),
+              const SizedBox(height: 24),
               Container(
                 padding: const EdgeInsets.all(24),
                 decoration: BoxDecoration(
@@ -152,6 +215,38 @@ class _VaultContent extends StatelessWidget {
       return address;
     }
     return '${address.substring(0, 6)}...${address.substring(address.length - 4)}';
+  }
+}
+
+class _SelectionBanner extends StatelessWidget {
+  const _SelectionBanner({required this.selection});
+
+  final VaultCoinSelection selection;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      elevation: 0,
+      color: theme.colorScheme.primary.withOpacity(0.1),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.token, size: 24),
+            const SizedBox(width: 12),
+            Text(
+              selection.symbol,
+              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(width: 12),
+            Text('x${selection.countPerCoin}'),
+          ],
+        ),
+      ),
+    );
   }
 }
 

@@ -189,3 +189,23 @@ class WalletViewModel extends StateNotifier<WalletUiState> {
     super.dispose();
   }
 }
+
+extension WalletUiStateUnity on WalletUiState {
+  List<Map<String, dynamic>> toUnityBalances() {
+    final wallet = this.wallet;
+    if (wallet == null) {
+      return const [];
+    }
+
+    return wallet.assets
+        .map((asset) {
+          final amount = asset.normalizedBalance;
+          return {
+            'symbol': asset.symbol.toUpperCase(),
+            'amount': amount < 0 ? 0 : amount,
+          };
+        })
+        .toList();
+  }
+}
+
